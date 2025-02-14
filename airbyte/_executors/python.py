@@ -1,9 +1,9 @@
 # Copyright (c) 2023 Airbyte, Inc., all rights reserved.
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
-import sys
 from contextlib import suppress
 from pathlib import Path
 from shutil import rmtree
@@ -17,6 +17,7 @@ from airbyte._executors.base import Executor
 from airbyte._util.meta import is_windows
 from airbyte._util.telemetry import EventState, log_install_state
 from airbyte._util.venv_util import get_bin_dir
+from airbyte._util import pip_util, uv_util
 
 
 if TYPE_CHECKING:
@@ -75,19 +76,6 @@ class VenvExecutor(Executor):
         suffix: Literal[".exe", ""] = ".exe" if is_windows() else ""
         return get_bin_dir(self._get_venv_path()) / ("python" + suffix)
 
-    def _run_subprocess_and_raise_on_failure(self, args: list[str]) -> None:
-        result = subprocess.run(
-            args,
-            check=False,
-            stderr=subprocess.PIPE,
-        )
-        if result.returncode != 0:
-            raise exc.AirbyteSubprocessFailedError(
-                run_args=args,
-                exit_code=result.returncode,
-                log_text=result.stderr.decode("utf-8"),
-            )
-
     def uninstall(self) -> None:
         if self._get_venv_path().exists():
             rmtree(str(self._get_venv_path()))
@@ -106,18 +94,15 @@ class VenvExecutor(Executor):
 
         After installation, the installed version will be stored in self.reported_version.
         """
-        self._run_subprocess_and_raise_on_failure(
-            [sys.executable, "-m", "venv", str(self._get_venv_path())]
-        )
-
-        pip_path = str(get_bin_dir(self._get_venv_path()) / "pip")
+        uv_util.create_venv(str(self._get_venv_path()))
         print(
             f"Installing '{self.name}' into virtual environment '{self._get_venv_path()!s}'.\n"
-            f"Running 'pip install {self.pip_url}'...\n"
+            f"Running 'uv pip install {self.pip_url}'...\n"
         )
         try:
-            self._run_subprocess_and_raise_on_failure(
-                args=[pip_path, "install", *shlex.split(self.pip_url)]
+            uv_util.install_package(
+                venv_path=self._get_venv_path(),
+                pip_url=self.pip_url,
             )
         except exc.AirbyteSubprocessFailedError as ex:
             # If the installation failed, remove the virtual environment
